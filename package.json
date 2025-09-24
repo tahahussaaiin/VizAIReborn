@@ -1,0 +1,22 @@
+{
+  "name": "vizai-platform",
+  "version": "1.0.0",
+  "description": "AI-powered data visualization platform that transforms CSV data into creative, publication-quality visualizations",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @vizai/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset"
+  },
+  "keywords": ["visualization", "AI", "data", "d3", "supabase"],
+  "author": "VizAI Team",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

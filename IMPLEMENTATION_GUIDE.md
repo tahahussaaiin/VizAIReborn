@@ -61,6 +61,20 @@ User Upload CSV → Function A (Analysis) → Metaphor Selection → Function B 
 
 ## Development Environment Setup
 
+### Service Integration Strategy
+
+**Phase 1: Local Development (Immediate)**
+- Run Supabase locally for database and auth
+- Mock AI responses for testing
+- Build complete UI and data flow
+- No external API keys required
+
+**Phase 2: Service Integration (When Ready)**
+- Google Generative AI will be handled entirely within Supabase Edge Functions
+- API key will be stored as Supabase Edge Function secret
+- No client-side AI integration needed
+- Supabase handles all AI communication securely
+
 ### Prerequisites Installation
 
 ```bash
@@ -69,8 +83,11 @@ nvm install 20.10.0
 nvm use 20.10.0
 npm install -g pnpm
 
-# Supabase CLI
+# Supabase CLI (for local development)
 npm install -g supabase
+
+# Docker Desktop (required for local Supabase)
+# Download from: https://www.docker.com/products/docker-desktop/
 
 # Development Tools
 npm install -g @types/node typescript tsx
@@ -91,17 +108,42 @@ echo "packages:\n  - 'packages/*'\n  - 'apps/*'" > pnpm-workspace.yaml
 mkdir -p apps/web apps/edge-functions packages/ui packages/utils packages/types
 ```
 
-### Local Supabase Setup
+### Local Supabase Setup (Development Only)
 
 ```bash
-# Initialize Supabase project
+# Initialize Supabase project locally
 supabase init
 
-# Start local development
+# Start local development (requires Docker running)
 supabase start
 
-# Link to remote project (when ready)
-supabase link --project-ref your-project-ref
+# This will output:
+# API URL: http://localhost:54321
+# GraphQL URL: http://localhost:54321/graphql/v1
+# DB URL: postgresql://postgres:postgres@localhost:54322/postgres
+# Studio URL: http://localhost:54323
+# Inbucket URL: http://localhost:54324
+# JWT secret: super-secret-jwt-token-with-at-least-32-characters-long
+# anon key: [your-local-anon-key]
+# service_role key: [your-local-service-key]
+
+# Save these values for local development
+```
+
+### Environment Configuration
+
+```bash
+# Create .env.local for development
+cat > .env.local << EOL
+# Local Supabase (from supabase start output)
+NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-local-anon-key-from-output
+SUPABASE_SERVICE_KEY=your-local-service-key-from-output
+
+# Mock mode flags (for development without AI)
+NEXT_PUBLIC_MOCK_AI=true
+NEXT_PUBLIC_ENVIRONMENT=development
+EOL
 ```
 
 ## Detailed Implementation Steps
@@ -204,6 +246,97 @@ CREATE POLICY "Users can access own AI context" ON ai_generation_context
 ```
 
 ### Phase 2: AI Processing Pipeline
+
+#### How Services Will Work When Connected
+
+**Google Generative AI Integration:**
+- API key stored securely in Supabase Edge Functions environment
+- Never exposed to client-side code
+- All AI calls routed through Edge Functions
+- Automatic retry and error handling
+
+**Service Flow:**
+1. Client uploads CSV to Supabase Storage
+2. Edge Function A triggered → Calls Gemini API internally
+3. Results stored in Supabase database
+4. Client selects metaphor
+5. Edge Function B triggered → Calls Gemini API for D3 generation
+6. Final visualization returned to client
+
+#### Development Without AI Services
+
+**Mock AI Service Implementation:**
+
+```typescript
+// packages/utils/src/mock-ai-service.ts
+export class MockAIService {
+  async analyzeCSV(csvData: string[][]): Promise<AnalysisResult> {
+    // Return mock analysis for development
+    return {
+      columnProfiles: this.generateMockProfiles(csvData[0]),
+      patterns: this.generateMockPatterns(),
+      metaphors: this.generateMockMetaphors(),
+      compactSummary: "Mock analysis of dataset with " + csvData.length + " rows"
+    };
+  }
+  
+  private generateMockMetaphors() {
+    return [
+      {
+        id: "mock-organic-1",
+        title: "Data Forest",
+        description: "Your data grows like trees in a forest",
+        category: "Organic",
+        innovationScore: 8.5,
+        colorPalette: ["#2D5F3F", "#8FBC8F", "#F0E68C", "#DEB887", "#8B4513"],
+        d3Strategy: "Force-directed tree layout"
+      },
+      {
+        id: "mock-geometric-1",
+        title: "Crystal Matrix",
+        description: "Data points form a crystalline structure",
+        category: "Geometric",
+        innovationScore: 7.8,
+        colorPalette: ["#4B0082", "#8A2BE2", "#9370DB", "#BA55D3", "#DDA0DD"],
+        d3Strategy: "Hexbin aggregation"
+      },
+      {
+        id: "mock-flow-1",
+        title: "Data Stream",
+        description: "Information flows like rivers",
+        category: "Flow",
+        innovationScore: 9.2,
+        colorPalette: ["#0077BE", "#00A8E8", "#00C9FF", "#90E0EF", "#CAF0F8"],
+        d3Strategy: "Sankey diagram"
+      }
+    ];
+  }
+  
+  async generateD3Code(metaphor: any): Promise<string> {
+    // Return mock D3 code for development
+    return `
+      // Mock D3 Visualization for ${metaphor.title}
+      const svg = d3.select('#viz-container')
+        .append('svg')
+        .attr('width', 1200)
+        .attr('height', 800);
+      
+      // Mock visualization elements
+      svg.append('rect')
+        .attr('width', 1200)
+        .attr('height', 800)
+        .attr('fill', '${metaphor.colorPalette[0]}');
+      
+      svg.append('text')
+        .attr('x', 600)
+        .attr('y', 400)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '24px')
+        .text('${metaphor.title} - Development Mode');
+    `;
+  }
+}
+```
 
 #### Reference: `README.md` - Lines 11-209 (Complete Analysis Function)
 
@@ -344,8 +477,13 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 import { StatisticsEngine } from '@vizai/utils';
 
-const genAI = new GoogleGenerativeAI(Deno.env.get('GEMINI_API_KEY')!);
-const model = genAI.getGenerativeModel({ 
+// When AI service is connected, this will use the real Gemini API
+// For now, we'll use mock service in development
+const aiService = Deno.env.get('GEMINI_API_KEY') 
+  ? new GoogleGenerativeAI(Deno.env.get('GEMINI_API_KEY')!)
+  : new MockAIService();
+
+const model = aiService.getGenerativeModel?.({ 
   model: 'gemini-2.0-flash-exp',
   generationConfig: {
     temperature: 0.1,
@@ -1257,21 +1395,25 @@ function calculateCost(inputTokens, outputTokens) {
 
 ## Phase-by-Phase Implementation
 
-### Week 1: Foundation & Infrastructure
+### Week 1: Foundation & Infrastructure (No External Services Required)
 
 #### Day 1-2: Environment Setup
-- [ ] Set up development environment
-- [ ] Initialize Supabase project
-- [ ] Configure local development
+- [ ] Install Docker Desktop for Windows
+- [ ] Set up development environment (Node.js, pnpm)
+- [ ] Initialize local Supabase project
+- [ ] Start Supabase locally with `supabase start`
+- [ ] Save local credentials from output
+- [ ] Configure .env.local with local Supabase URLs
 - [ ] Set up version control
-- [ ] Configure CI/CD pipeline
+- [ ] Create mock AI service for development
 
-#### Day 3-4: Database Schema
-- [ ] Create all tables with constraints
+#### Day 3-4: Database Schema (Local Supabase)
+- [ ] Create all tables with constraints in local Supabase
 - [ ] Set up indexes for performance
-- [ ] Configure RLS policies
+- [ ] Configure RLS policies (test locally)
 - [ ] Create database functions
-- [ ] Test migrations
+- [ ] Test migrations with `supabase db reset`
+- [ ] Access local Studio at http://localhost:54323
 
 #### Day 5-7: Core Utilities
 - [ ] Implement statistics library
@@ -1283,18 +1425,20 @@ function calculateCost(inputTokens, outputTokens) {
 ### Week 2: AI Processing Pipeline
 
 #### Day 8-10: Analysis Function
-- [ ] Implement pre-processing logic
-- [ ] Create Gemini integration
-- [ ] Build prompt templates
-- [ ] Develop metaphor generation
-- [ ] Test with sample datasets
+- [ ] Implement pre-processing logic (works without AI)
+- [ ] Create mock AI responses for testing
+- [ ] Build prompt templates (prepare for Gemini)
+- [ ] Develop metaphor generation logic
+- [ ] Test with sample datasets using mock service
+- [ ] Prepare Edge Function structure for later AI integration
 
 #### Day 11-13: Visualization Function
-- [ ] Implement D3 generation
-- [ ] Create syntax validator
-- [ ] Build repair mechanism
-- [ ] Develop fallback templates
-- [ ] Test visualization outputs
+- [ ] Implement D3 generation with mock responses
+- [ ] Create syntax validator (works independently)
+- [ ] Build repair mechanism structure
+- [ ] Develop fallback templates (critical for development)
+- [ ] Test visualization outputs with mock data
+- [ ] Prepare Edge Function B for later AI integration
 
 #### Day 14: Integration Testing
 - [ ] End-to-end pipeline testing
@@ -1303,14 +1447,15 @@ function calculateCost(inputTokens, outputTokens) {
 - [ ] Token usage optimization
 - [ ] Cost analysis
 
-### Week 3: Frontend Development
+### Week 3: Frontend Development (Using Local Supabase)
 
 #### Day 15-17: Core UI Components
 - [ ] Set up Next.js application
+- [ ] Connect to local Supabase instance
 - [ ] Implement design system
 - [ ] Create component library
-- [ ] Build authentication flow
-- [ ] Develop file upload interface
+- [ ] Build authentication flow (using local Supabase Auth)
+- [ ] Develop file upload interface (to local Supabase Storage)
 
 #### Day 18-19: Visualization Interface
 - [ ] Create metaphor selection UI
@@ -1326,9 +1471,17 @@ function calculateCost(inputTokens, outputTokens) {
 - [ ] Add keyboard navigation
 - [ ] Optimize performance
 
-### Week 4: Production Readiness
+### Week 4: Production Readiness & Service Integration
 
-#### Day 22-23: Security & Compliance
+#### Day 22: Connect External Services
+- [ ] Create Supabase cloud project (free tier)
+- [ ] Migrate local database to cloud
+- [ ] Get Google Generative AI API key
+- [ ] Store API key in Supabase secrets
+- [ ] Deploy Edge Functions with real AI integration
+- [ ] Test end-to-end with real services
+
+#### Day 23: Security & Compliance
 - [ ] Implement PII detection
 - [ ] Add data encryption
 - [ ] Configure CORS policies
@@ -1534,23 +1687,36 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 ```
 
-### Production Environment Variables
+### Environment Variables Setup
 
+#### Development Environment (.env.local)
 ```bash
-# .env.production
-# Supabase
+# Local Supabase (from supabase start output)
+NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-local-anon-key
+SUPABASE_SERVICE_KEY=your-local-service-key
+
+# Development Flags
+NEXT_PUBLIC_MOCK_AI=true
+NEXT_PUBLIC_ENVIRONMENT=development
+```
+
+#### Production Environment (.env.production)
+```bash
+# Remote Supabase (created when ready)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_KEY=your-service-key
 
-# Gemini AI
-GEMINI_API_KEY=your-gemini-api-key
+# Gemini AI (stored in Supabase Edge Functions)
+# Set via Supabase CLI:
+# supabase secrets set GEMINI_API_KEY=your-gemini-api-key
 
 # Application
 NEXT_PUBLIC_APP_URL=https://vizai.app
 NEXT_PUBLIC_ENVIRONMENT=production
 
-# Monitoring
+# Optional Monitoring (can add later)
 SENTRY_DSN=your-sentry-dsn
 POSTHOG_API_KEY=your-posthog-key
 
@@ -1560,6 +1726,20 @@ ENABLE_RATE_LIMITING=true
 MAX_FILE_SIZE_MB=10
 MAX_REQUESTS_PER_MINUTE=10
 DAILY_BUDGET_USD=5.00
+```
+
+### How to Set Gemini API Key in Supabase Edge Functions
+
+```bash
+# When ready to connect AI service:
+# 1. Create a Google Cloud account
+# 2. Enable Generative AI API
+# 3. Get your API key
+# 4. Store it in Supabase Edge Functions:
+
+supabase secrets set GEMINI_API_KEY=your-actual-api-key
+
+# This keeps the key secure and never exposes it to the client
 ```
 
 ## Monitoring & Maintenance
@@ -1718,24 +1898,93 @@ export default async function AdminDashboard() {
 
 ## Technology Stack Summary
 
-**Backend**:
-- Platform: Supabase (Database + Edge Functions)
-- Runtime: Deno (TypeScript/JavaScript)
-- AI Model: Google Gemini 2.5 Flash
-- Visualization Engine: D3.js v7
+**Development Stack (Immediate)**:
+- Local Database: Supabase local (PostgreSQL via Docker)
+- Local Auth: Supabase Auth (local instance)
+- Local Storage: Supabase Storage (local instance)
+- Mock AI Service: Custom mock implementation
+- Frontend: Next.js with TypeScript
+- Styling: Tailwind CSS
+- Visualization: D3.js v7
 
-**Frontend**:
-- Framework: React with TypeScript
-- Styling: Tailwind CSS + Custom Design System
-- Icons: Lucide React
-- State Management: Context + Hooks
-- Build Tool: Vite or Next.js
-
-**Infrastructure**:
-- Hosting: Vercel/Netlify for frontend
-- Database: Supabase PostgreSQL
-- File Storage: Supabase Storage
+**Production Stack (When Ready)**:
+- Platform: Supabase Cloud (Database + Edge Functions)
+- Runtime: Deno (in Edge Functions)
+- AI Model: Google Gemini 2.5 Flash (via Edge Functions)
+- Frontend Hosting: Vercel/Netlify
 - Monitoring: Custom telemetry + health checks
+
+**Key Architecture Decisions**:
+- All AI calls handled server-side in Edge Functions
+- No client-side API keys or AI integration
+- Supabase manages all sensitive operations
+- Frontend only communicates with Supabase
+
+## Service Integration Architecture
+
+### How Google Generative AI Works Through Supabase
+
+```mermaid
+Client App → Supabase Edge Function → Google Gemini API
+     ↑              ↓                        ↓
+     └──── Response with D3 Code ←──────────┘
+```
+
+**Security Benefits**:
+1. API key never exposed to client
+2. Rate limiting at Edge Function level
+3. Cost control through Supabase
+4. Automatic retry logic in Edge Functions
+
+### Local Development Workflow
+
+```bash
+# Start local Supabase (runs PostgreSQL, Auth, Storage)
+supabase start
+
+# Develop with mock AI responses
+npm run dev
+
+# Test Edge Functions locally
+supabase functions serve analyze-csv --env-file .env.local
+
+# When ready for real AI:
+# 1. Get Gemini API key
+# 2. Set in Edge Functions: supabase secrets set GEMINI_API_KEY=xxx
+# 3. Deploy: supabase functions deploy
+```
+
+### Migration Path from Local to Production
+
+1. **Develop Everything Locally First**
+   - Use mock AI service
+   - Test with local Supabase
+   - Build complete UI/UX
+
+2. **Create Supabase Cloud Project**
+   ```bash
+   # Create project at https://app.supabase.com
+   # Link local to remote
+   supabase link --project-ref your-project-ref
+   
+   # Push database schema
+   supabase db push
+   ```
+
+3. **Add AI Service**
+   ```bash
+   # Store Gemini API key securely
+   supabase secrets set GEMINI_API_KEY=your-key
+   
+   # Deploy Edge Functions with AI
+   supabase functions deploy
+   ```
+
+4. **Update Frontend Config**
+   ```bash
+   # Switch from .env.local to .env.production
+   # Deploy to Vercel/Netlify
+   ```
 
 ## Critical Implementation Notes
 

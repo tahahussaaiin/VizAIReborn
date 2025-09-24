@@ -1,0 +1,18 @@
+{
+  "name": "@vizai/utils",
+  "version": "1.0.0",
+  "description": "Shared utilities for VizAI platform",
+  "main": "index.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\""
+  },
+  "dependencies": {
+    "d3": "^7.8.5"
+  },
+  "devDependencies": {
+    "@types/d3": "^7.4.0",
+    "typescript": "^5.3.0"
+  }
+}
